@@ -56,6 +56,13 @@
   table.stats td { padding: 6px 4px; border-bottom: 2px dashed rgba(43,29,20,.25); }
   table.stats td:last-child { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
   .muted { opacity: .7; font-size: .95rem !important; }
+  .debrief { border-top: 3px dashed rgba(43,29,20,.3); margin-top: 14px; padding-top: 6px; }
+  .debrief p { font-size: 1rem !important; }
+  .big:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: 0 6px 0 var(--ink); }
+  #consentText { border: 3px solid var(--ink); border-radius: 14px; background: #fff; padding: 4px 14px; max-height: 58vh; overflow: auto; }
+  #consentText p { font-size: 1rem; }
+  .card label.check { display: flex; gap: 12px; align-items: flex-start; font-weight: 700; margin-top: 16px; cursor: pointer; line-height: 1.35; }
+  .card label.check input { width: 24px; height: 24px; margin: 1px 0 0; flex: none; accent-color: #3b7dd8; }
   /* narrow screens held upright: buttons stay on the right in a slimmer panel */
   @media (max-width: 700px) and (orientation: portrait) {
     #panel { width: clamp(120px, 34vw, 240px); gap: 10px; padding: 10px 10px 14px; }
@@ -71,7 +78,39 @@
   <div id="stage">
     <canvas id="scene" aria-label=""></canvas>
 
-    <div class="overlay" id="msgOverlay">
+    <!-- =====================================================================
+         CONSENT TEXT – replace everything in [square brackets] with the
+         wording approved by your ethics committee. Keep the checkbox and
+         the two buttons below it.
+         ===================================================================== -->
+    <div class="overlay" id="consentOverlay">
+      <div class="card">
+        <h2 id="consentTitle">Information and consent</h2>
+        <div id="consentPage">
+          <div id="consentText">
+            <p><b>The Maze Game</b> · Zuzanna Tymieniecka, Kühne Logistics University (KLU), Hamburg · zuzanna.tymieniecka@klu.org</p>
+            <p>You will play a short maze game in two parts (about 10 minutes). Taking part is voluntary, and you can stop at any time by closing this page.</p>
+            <p>We record your answers and response times in the game and your Prolific ID, study ID and session ID – nothing that directly identifies you. The data are sent through DataPipe to the research team’s secure storage and used only for research. Your Prolific ID is removed before analysis; the anonymised data are kept for 10 years and may be published in an open research repository.</p>
+            <p>To have your data deleted, email the researcher with your Prolific ID within 30 days. You also have the right to access and correct your data and to complain to a data protection authority. Legal basis: your consent (Art. 6(1)(a) GDPR). Data controller: Kühne Logistics University gGmbH, Großer Grasbrook 17, 20457 Hamburg, Germany.</p>
+          </div>
+          <label class="check"><input type="checkbox" id="consentBox"> I have read and understood the information above, I am 18 or older, and I agree to take part in this study.</label>
+          <div class="row">
+            <button class="big" id="consentYes" disabled>I agree – continue</button>
+            <button class="big alt" id="consentNo">I do not agree</button>
+          </div>
+        </div>
+        <div id="declinePage" hidden>
+          <p>Thank you for your time. You have chosen not to take part, and no data have been saved.</p>
+          <p>Please go back to Prolific and <b>return your submission</b> by clicking <b>“Stop without completing”</b>, so your place becomes available to someone else.</p>
+          <div class="row">
+            <a class="big" id="declineReturn" hidden style="text-decoration:none">Return to Prolific</a>
+            <button class="big alt" id="declineBack">Back to the information</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="msgOverlay" hidden>
       <div class="card">
         <h2 id="msgTitle">Maze Guide</h2>
         <div id="msgBody">
@@ -87,6 +126,11 @@
         <h2>Finished!</h2>
         <p class="muted" id="endMeta"></p>
         <table class="stats" id="statsTable"></table>
+        <!-- DEBRIEF – shown to everyone who finishes -->
+        <div class="debrief" id="debrief">
+          <p><b>About this study.</b> We are studying how people give directions from a point of view other than their own. In one part you gave directions for a person sitting across the table, and in the other relative to an arrow. Comparing the two shows whether taking another person’s perspective works differently from simply turning directions around in space.</p>
+          <p>Please don’t share details of the study with others who might take part. If you have questions, email zuzanna.tymieniecka@klu.org.</p>
+        </div>
         <p id="saveStatus" hidden></p>
         <div class="row" id="prolificRow" hidden>
           <button class="big" id="retryBtn" hidden>Try saving again</button>
@@ -140,6 +184,12 @@
   //   3. otherwise (or if DataPipe can't be reached) a random group.
   // The group and how it was chosen are saved in the data.
   //
+  // Participants first see an information & consent screen. Only after they
+  // tick the box and click "I agree" do they continue (and only then is a group
+  // drawn). Those who decline are asked to return their submission on
+  // Prolific; nothing is saved for them. The consent time and Prolific ID are
+  // saved with the data.
+  //
   // Directions are always in the far-side frame: forward = toward the player,
   // reverse = away from the player, right = the far side's right (the player's
   // left), left = the far side's left (the player's right).
@@ -159,6 +209,10 @@
     // Completion URL copied from your Prolific study settings
     // (it ends in ?cc=YOURCODE). Leave '' if not on Prolific.
     PROLIFIC_COMPLETION_URL: 'https://app.prolific.com/submissions/complete?cc=C14J80FY',
+    // Optional: URL of a second Prolific completion path for people who do NOT
+    // consent (set that path's action to "Request a return"). Leave '' to only
+    // show them a message asking them to return their submission.
+    PROLIFIC_NO_CONSENT_URL: '',
     // Show the results table to participants at the end?
     SHOW_RESULTS_TO_PARTICIPANT: true
   };
@@ -659,7 +713,8 @@
     assignment = await getGroup();
     plan = GROUPS[assignment.group].map((p, i) => ({ part: i + 1, ...p }));
     session = {
-      study_id: PROLIFIC.study, session_id: PROLIFIC.session,
+      prolific_pid: PROLIFIC.pid, study_id: PROLIFIC.study, session_id: PROLIFIC.session,
+      consent: 'yes', consent_time: consentTime,
       group: assignment.group, assignment_source: assignment.source,
       order: plan[0].condition === 'social' ? 'social_first' : 'nonsocial_first',
       started: new Date().toISOString()
@@ -772,6 +827,7 @@
     table.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
     table.hidden = ONLINE && !CONFIG.SHOW_RESULTS_TO_PARTICIPANT;
     document.querySelector('#endOverlay h2').textContent = ONLINE ? 'Finished – thank you!' : 'Finished!';
+    document.getElementById('endOverlay').querySelector('.card').scrollTop = 0;
     // participants on Prolific play once: no "Play again"
     document.getElementById('localRow').hidden = ONLINE;
     endOverlay.hidden = false;
@@ -811,19 +867,40 @@
   document.getElementById('retryBtn').onclick = upload;
 
   // --- CSV export (one summary row per part; one trial row per move) ----------
-  const ID_HEAD = ['study_id', 'session_id', 'group', 'order', 'assignment_source', 'part', 'condition', 'maze'];
-  const idCells = (s, p) => [s.study_id, s.session_id, s.group, s.order, s.assignment_source, p.part, p.condition, p.maze];
-  const SUMMARY_HEAD = [...ID_HEAD, 'practice_attempts', 'started', 'finished', 'intersections_travelled', 'errors', 'mean_rt_ms', 'mean_correct_rt_ms', 'sd_rt_ms', 'sd_correct_rt_ms'];
+  const ID_HEAD = ['prolific_pid', 'study_id', 'session_id', 'group', 'order', 'assignment_source', 'part', 'condition', 'maze'];
+  const idCells = (s, p) => [s.prolific_pid, s.study_id, s.session_id, s.group, s.order, s.assignment_source, p.part, p.condition, p.maze];
+  const SUMMARY_HEAD = [...ID_HEAD, 'consent', 'consent_time', 'practice_attempts', 'started', 'finished', 'intersections_travelled', 'errors', 'mean_rt_ms', 'mean_correct_rt_ms', 'sd_rt_ms', 'sd_correct_rt_ms'];
   const csvCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const csv = rows => rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
   // file names use Prolific's session ID (from the study link) when present, plus the start time
   const stamp = s => (s.session_id ? s.session_id.replace(/[^\w-]+/g, '_') + '_' : '') + s.started.replace(/[:.]/g, '-');
-  const summaryCSV = s => csv([SUMMARY_HEAD, ...s.parts.map(p => [...idCells(s, p), p.practice_attempts, p.started, p.finished,
+  const summaryCSV = s => csv([SUMMARY_HEAD, ...s.parts.map(p => [...idCells(s, p), s.consent, s.consent_time, p.practice_attempts, p.started, p.finished,
     p.stats.intersections, p.stats.errors, fmt(p.stats.meanRT), fmt(p.stats.meanCorrectRT), fmt(p.stats.sdRT), fmt(p.stats.sdCorrectRT)])]);
   const trialsCSV = s => csv([
     [...ID_HEAD, 'trial', 'from_cell', 'to_cell', 'correct_direction', 'response', 'correct', 'rt_ms'],
     ...s.parts.flatMap(p => p.trials.map(t => [...idCells(s, p), t.trial, t.from, t.to, t.expected, t.response, t.correct, t.rt.toFixed(1)]))
   ]);
+
+  // --- consent ---------------------------------------------------------------
+  let consentTime = '';
+  const consentOverlay = document.getElementById('consentOverlay');
+  const consentBox = document.getElementById('consentBox'), consentYes = document.getElementById('consentYes');
+  consentBox.onchange = () => { consentYes.disabled = !consentBox.checked; };
+  consentYes.onclick = () => {
+    if (!consentBox.checked) return;
+    consentTime = new Date().toISOString(); // recorded with the data (no group is drawn before this)
+    consentOverlay.hidden = true; msgOverlay.hidden = false;
+  };
+  document.getElementById('consentNo').onclick = () => {
+    document.getElementById('consentPage').hidden = true; document.getElementById('declinePage').hidden = false;
+    document.getElementById('consentTitle').textContent = 'You are not taking part';
+    const a = document.getElementById('declineReturn');
+    if (CONFIG.PROLIFIC_NO_CONSENT_URL) { a.href = CONFIG.PROLIFIC_NO_CONSENT_URL; a.hidden = false; }
+  };
+  document.getElementById('declineBack').onclick = () => {
+    document.getElementById('consentPage').hidden = false; document.getElementById('declinePage').hidden = true;
+    document.getElementById('consentTitle').textContent = 'Information and consent';
+  };
 
   msgBtn.onclick = begin;
   document.getElementById('againBtn').onclick = () => location.reload();
