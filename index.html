@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maze Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #2b1d14;
+    --panel: #fff6e6;
+    --btn: #ffd23f;
+    --btn-shadow: #c99a00;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: #fde6c4; color: var(--ink);
+    font-family: "Baloo 2", "Comic Sans MS", "Trebuchet MS", system-ui, sans-serif; overflow: hidden; }
+  #app { display: flex; height: 100vh; width: 100vw; }
+  #stage { position: relative; flex: 1; min-width: 0; }
+  #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #panel { width: clamp(280px, 30vw, 420px); background: var(--panel); border-left: 4px solid var(--ink);
+    display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 18px; padding: 20px 18px; }
+  #panel h1 { margin: 0; font-size: 1.6rem; line-height: 1; text-align: center; font-weight: 800; }
+  #counter { text-align: center; font-size: 1.1rem; font-weight: 700; background: #fff; border: 3px solid var(--ink);
+    border-radius: 14px; padding: 6px 8px; }
+  /* one column, top to bottom: forward, right, left, reverse */
+  #pad { display: grid; grid-template-columns: 1fr; row-gap: 16px; }
+  .dir { appearance: none; font: inherit; font-size: clamp(1rem, 1.6vw, 1.45rem); font-weight: 800; color: var(--ink);
+    background: var(--btn); border: 4px solid var(--ink); border-radius: 16px; padding: 12px 4px 8px; min-width: 0;
+    box-shadow: 0 7px 0 var(--ink); cursor: pointer; transition: transform .06s, box-shadow .06s, opacity .15s;
+    user-select: none; -webkit-tap-highlight-color: transparent; }
+  .dir:hover { background: #ffdf6b; }
+  .dir:active { transform: translateY(5px); box-shadow: 0 2px 0 var(--ink); }
+  .dir:focus-visible { outline: 4px solid #3b7dd8; outline-offset: 3px; }
+  #panel.busy .dir { pointer-events: none; opacity: .75; }
+  #panel.idle .dir { pointer-events: none; opacity: .5; }
+
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(43, 29, 20, .45); padding: 16px; z-index: 5; }
+  .overlay[hidden] { display: none; }
+  .card { background: var(--panel); border: 4px solid var(--ink); border-radius: 24px; box-shadow: 0 10px 0 var(--ink);
+    max-width: 560px; width: 100%; padding: 26px 28px 24px; max-height: 92vh; overflow: auto; }
+  .card h2 { margin: 0 0 8px; font-size: 2rem; line-height: 1.1; }
+  .card p { margin: 8px 0; font-size: 1.08rem; line-height: 1.4; }
+  .card label { display: block; margin-top: 14px; font-weight: 700; }
+  .card input { font: inherit; font-size: 1.1rem; width: 100%; padding: 8px 12px; border: 3px solid var(--ink);
+    border-radius: 12px; background: #fff; margin-top: 4px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .big { appearance: none; font: inherit; font-weight: 800; font-size: 1.15rem; color: var(--ink); background: var(--btn);
+    border: 4px solid var(--ink); border-radius: 16px; padding: 10px 18px 7px; box-shadow: 0 6px 0 var(--ink); cursor: pointer; }
+  .big:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--ink); }
+  .big.alt { background: #fff; }
+  table.stats { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 1.05rem; }
+  table.stats td { padding: 6px 4px; border-bottom: 2px dashed rgba(43,29,20,.25); }
+  table.stats td:last-child { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .muted { opacity: .7; font-size: .95rem !important; }
+  /* narrow screens held upright: buttons stay on the right in a slimmer panel */
+  @media (max-width: 700px) and (orientation: portrait) {
+    #panel { width: clamp(120px, 34vw, 240px); gap: 10px; padding: 10px 10px 14px; }
+    #panel h1 { display: none; }
+    #counter { padding: 2px 4px; }
+    #pad { row-gap: 10px; }
+    .dir { padding: 9px 4px 6px; font-size: 1.1rem; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="scene" aria-label=""></canvas>
+
+    <div class="overlay" id="msgOverlay">
+      <div class="card">
+        <h2 id="msgTitle">Maze Guide</h2>
+        <div id="msgBody">
+          <p>This study has <b>two parts</b>. In each part you guide a <b style="color:#d81f26">red ball</b> through a hedge maze by giving directions with the buttons on the screen.</p>
+          <p>Each part starts with a short practice. You’ll get the instructions for each part just before it starts.</p>
+        </div>
+        <div class="row"><button class="big" id="msgBtn">Start</button></div>
+      </div>
+    </div>
+
+    <div class="overlay" id="endOverlay" hidden>
+      <div class="card">
+        <h2>Finished!</h2>
+        <p class="muted" id="endMeta"></p>
+        <table class="stats" id="statsTable"></table>
+        <p id="saveStatus" hidden></p>
+        <div class="row" id="prolificRow" hidden>
+          <button class="big" id="retryBtn" hidden>Try saving again</button>
+          <a class="big" id="returnBtn" hidden style="text-decoration:none">Return to Prolific</a>
+        </div>
+        <div class="row" id="localRow">
+          <button class="big alt" id="againBtn">Play again</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel" class="idle">
+    <h1>Maze Guide</h1>
+    <div id="counter">Part 1 of 2</div>
+    <div id="pad">
+      <button class="dir" data-dir="forward">forward</button>
+      <button class="dir" data-dir="right">right</button>
+      <button class="dir" data-dir="left">left</button>
+      <button class="dir" data-dir="reverse">reverse</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ===========================================================================
+  // MAZE GUIDE – two-part study (social + non-social), counterbalanced.
+  //
+  // Every participant does both conditions, one after the other:
+  //   social     – a blindfolded person sits across the table; directions are
+  //                given from their point of view, as they are sitting.
+  //   nonsocial  – a small arrow lies on the far side of the table, pointing
+  //                toward the player; directions are given relative to it.
+  // There are two mazes, A and B (each with its own short practice maze).
+  // Each participant gets one maze per condition, never the same maze twice.
+  //
+  // Four groups (a 2 x 2 counterbalancing of order and maze assignment):
+  //   group 1: part 1 social    + maze A, part 2 nonsocial + maze B
+  //   group 2: part 1 social    + maze B, part 2 nonsocial + maze A
+  //   group 3: part 1 nonsocial + maze B, part 2 social    + maze A
+  //   group 4: part 1 nonsocial + maze A, part 2 social    + maze B
+  // With equal numbers per group: social is first for half the participants,
+  // each maze goes with each condition for half, and each maze comes first for
+  // half.
+  //
+  // How the group is chosen (first that applies):
+  //   1. a GROUP=1..4 parameter in the link (for testing or top-up studies);
+  //   2. DataPipe's condition assignment (turn it on with 4 conditions), which
+  //      hands out 0,1,2,3,0,1,2,3,... in arrival order;
+  //   3. otherwise (or if DataPipe can't be reached) a random group.
+  // The group and how it was chosen are saved in the data.
+  //
+  // Directions are always in the far-side frame: forward = toward the player,
+  // reverse = away from the player, right = the far side's right (the player's
+  // left), left = the far side's left (the player's right).
+  // ===========================================================================
+
+  // ---------------------------------------------------------------------------
+  // ONLINE STUDY SETTINGS (fill these in before running on Prolific)
+  // ---------------------------------------------------------------------------
+  const CONFIG = {
+    // Experiment ID from pipe.jspsych.org (DataPipe). When set, every finished
+    // session is uploaded as two CSV files to the storage linked to that DataPipe
+    // experiment (Google Drive, Dataverse or Zenodo). Leave '' to skip.
+    DATAPIPE_EXPERIMENT_ID: 'SSGYJXzcVMs0',
+    // Ask DataPipe for a balanced group (needs condition assignment turned on
+    // in the DataPipe dashboard with 4 conditions).
+    USE_DATAPIPE_CONDITIONS: true,
+    // Completion URL copied from your Prolific study settings
+    // (it ends in ?cc=YOURCODE). Leave '' if not on Prolific.
+    PROLIFIC_COMPLETION_URL: 'https://app.prolific.com/submissions/complete?cc=C14J80FY',
+    // Show the results table to participants at the end?
+    SHOW_RESULTS_TO_PARTICIPANT: true
+  };
+  // Prolific adds these to the study link when you tick "URL parameters".
+  const URLP = new URLSearchParams(location.search);
+  const PROLIFIC = { pid: URLP.get('PROLIFIC_PID') || '', study: URLP.get('STUDY_ID') || '', session: URLP.get('SESSION_ID') || '' };
+  const ONLINE = !!(CONFIG.DATAPIPE_EXPERIMENT_ID || CONFIG.PROLIFIC_COMPLETION_URL || PROLIFIC.pid);
+
+  const GROUPS = {
+    1: [{ condition: 'social', maze: 'A' }, { condition: 'nonsocial', maze: 'B' }],
+    2: [{ condition: 'social', maze: 'B' }, { condition: 'nonsocial', maze: 'A' }],
+    3: [{ condition: 'nonsocial', maze: 'B' }, { condition: 'social', maze: 'A' }],
+    4: [{ condition: 'nonsocial', maze: 'A' }, { condition: 'social', maze: 'B' }]
+  };
+
+  // ---------------------------------------------------------------------------
+  // Maze data (fixed). Block grid: '1' = hedge, '0' = path. Row 0 is the BACK
+  // edge (the far side); the last row is the FRONT edge (the player's side).
+  // Route nodes are cells [col,row]. The ball starts on a green dot behind the
+  // maze; move 1 is "forward" into the first cell, moves 2-31 go node to node,
+  // and move 32 leaves the last node (in a side column) sideways through a gap
+  // in the side hedge onto the star.
+  // Route rules: never the same command twice in a row; any 4 consecutive
+  // moves contain at least 3 different commands.
+  // Maze B was generated to match maze A's difficulty: same command counts
+  // (9 forward, 7 reverse, 7 left, 9 right), similar route length (54 vs 52
+  // cells), similar numbers of junctions and dead ends.
+  // Practice mazes: 4 moves ending in the middle of a smaller maze.
+  //   practice A: forward, right, forward, left (used with maze A)
+  //   practice B: forward, left, forward, right (used with maze B)
+  // ---------------------------------------------------------------------------
+  const MAZE_DATA = { A: {"W":11,"H":9,"grid":["11111111111111111011111","10000000000010100000001","11101111101110111110111","10101000000010000000001","10101110111110111011111","10101010101010100000001","10101010101011111111101","10000010001000000000101","11111011101011111011101","10001010001010000000101","10101010101011101111101","10100010101010000000001","10101010111011111111101","10101010100000001000101","10111010111110101110111","00001010000000100000001","10111010111110101111111","10100010100000100000001","11111111111111111111111"],"nodes":[[8,0],[9,0],[9,1],[8,1],[8,2],[10,2],[10,5],[7,5],[7,4],[8,4],[8,3],[5,3],[5,6],[6,6],[6,7],[3,7],[3,4],[4,4],[4,3],[3,3],[3,1],[4,1],[4,0],[1,0],[1,3],[2,3],[2,5],[1,5],[1,4],[0,4],[0,7]]}, B: {"W":11,"H":9,"grid":["11111111111111111111101","10000000000000101000001","11111011111011101110101","10000000100000101010101","11111110101111101010111","10000000100000000010101","10101110101011101110101","10101010101010101000001","11101011111010111111101","10101000001010000000101","10101010111010111110101","00100010100010000010101","10111110101010101110101","10000000101010101000001","10111110101011101111101","10101010101000101000001","11101011101111101110111","10000000000000000010001","11111111111111111111111"],"nodes":[[10,0],[9,0],[9,3],[10,3],[10,6],[9,6],[9,4],[6,4],[6,5],[7,5],[7,8],[4,8],[4,5],[5,5],[5,2],[4,2],[4,1],[5,1],[5,0],[2,0],[2,1],[3,1],[3,2],[1,2],[1,5],[2,5],[2,4],[3,4],[3,6],[0,6],[0,5]]} };
+  const PRACTICE_DATA = { A: {"grid":["111111111011111","100000000000001","101110111011111","101010100000101","101010111111101","100010000000001","111110111010111","100000101010001","101111101011101","100000001010001","111111111111111"],"nodes":[[4,0],[2,0],[2,2],[4,2]]}, B: {"grid":["111110111111111","100000000000001","111110111010111","100000001010001","101111111011101","101000000000101","101010111111111","101010001000001","101111101011101","100000100010001","111111111111111"],"nodes":[[2,0],[4,0],[4,2],[2,2]]} };
+
+  const BH = MAZE_DATA.A.grid.length, BW = MAZE_DATA.A.grid[0].length;
+  let GRID = null; // grid of the board currently shown
+
+  function dirBetween(a, b) {
+    const dc = Math.sign(b[0] - a[0]), dr = Math.sign(b[1] - a[1]);
+    if (dr > 0) return 'forward';
+    if (dr < 0) return 'reverse';
+    if (dc < 0) return 'right';
+    return 'left';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fixed camera & projection (world units: 1 = one hedge block).
+  // x: right, y: up, z: away from the player. Maze floor is y = 0.
+  // ---------------------------------------------------------------------------
+  const CAM = { x: 0, h: 64, dist: 40 };
+  const HEDGE_H = 0.5, BALL_R = 0.6;
+  const BOARD = { x0: -BW / 2 - 1, x1: BW / 2 + 1, z0: -1, z1: BH + 1, t: 1.3 };
+  const TABLE = { x0: -21, x1: 21, z0: -3.5, z1: BH + 9, y: -BOARD.t, t: 1.8 };
+  const PERSON_Z = TABLE.z1 + 4, PS = 0.86; // PS: person scale
+  const ROOM = { floorY: -34, wallZ: 70 };
+
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  let F = 1, OX = 0, OY = 0, DPR = 1, CW = 0, CH = 0;
+
+  function P(x, y, z) {
+    const d = z + CAM.dist;
+    return [OX + F * (x - CAM.x) / d, OY + F * (CAM.h - y) / d];
+  }
+  const scaleAt = z => F / (z + CAM.dist);
+
+  function fit() {
+    const r = canvas.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    CW = r.width; CH = r.height;
+    canvas.width = Math.round(CW * DPR); canvas.height = Math.round(CH * DPR);
+    // normalised bounds of the important parts of the scene
+    const pts = [
+      [BOARD.x0 - 3, TABLE.y - TABLE.t - 0.5, TABLE.z0], [BOARD.x1 + 3, TABLE.y - TABLE.t - 0.5, TABLE.z0],
+      [0, 31.5 * PS, PERSON_Z], [-15, 22 * PS, PERSON_Z], [15, 22 * PS, PERSON_Z]
+    ];
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const [x, y, z] of pts) {
+      const d = z + CAM.dist, u = x / d, v = (CAM.h - y) / d;
+      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    }
+    const m = 0.94;
+    F = Math.min(CW * m / (u1 - u0), CH * m / (v1 - v0));
+    OX = CW / 2 - F * (u0 + u1) / 2;
+    OY = CH / 2 - F * (v0 + v1) / 2 + CH * 0.015;
+  }
+
+  // --- drawing helpers -------------------------------------------------------
+  const INK = '#2b1d14';
+  let LW = 2;
+  function path3(pts) { ctx.beginPath(); pts.forEach((p, i) => { const [x, y] = P(...p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); }
+  function poly3(pts, fill, stroke = INK, lw = LW) {
+    path3(pts);
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.lineJoin = 'round'; ctx.stroke(); }
+  }
+  function seg3(a, b, stroke = INK, lw = LW) {
+    const [x1, y1] = P(...a), [x2, y2] = P(...b);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
+  }
+  function box(x0, x1, y0, y1, z0, z1, c) {
+    // generic outlined box (camera is in front & above)
+    if (CAM.x < x0) poly3([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], c.side);
+    if (CAM.x > x1) poly3([[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]], c.side);
+    poly3([[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]], c.front);
+    if (CAM.h > y1) poly3([[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], c.top);
+  }
+  function rrect(x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  // --- room ------------------------------------------------------------------
+  function drawRoom() {
+    const [, horizon] = P(0, ROOM.floorY, ROOM.wallZ);
+    ctx.fillStyle = '#fde6c4'; ctx.fillRect(0, 0, CW, CH);
+    // wainscot
+    const [, wy] = P(0, ROOM.floorY + 16, ROOM.wallZ);
+    ctx.fillStyle = '#f5c98f'; ctx.fillRect(0, wy, CW, horizon - wy);
+    ctx.strokeStyle = INK; ctx.lineWidth = LW; ctx.beginPath(); ctx.moveTo(0, wy); ctx.lineTo(CW, wy); ctx.stroke();
+    // window (left) and frame (right) on the back wall
+    const win = (x0, x1, y0, y1, fill) => {
+      const [a, b] = P(x0, y1, ROOM.wallZ), [c, d] = P(x1, y0, ROOM.wallZ);
+      rrect(a, b, c - a, d - b, LW * 3); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = LW * 1.6; ctx.stroke();
+      return [a, b, c, d];
+    };
+    const [a, b, c, d] = win(-78, -44, 6, 40, '#a9def5');
+    ctx.fillStyle = '#fff'; // cloud
+    ctx.beginPath(); const cx = a + (c - a) * .38, cy = b + (d - b) * .35, cr = (c - a) * .09;
+    ctx.arc(cx, cy, cr, 0, 7); ctx.arc(cx + cr * 1.2, cy - cr * .4, cr * 1.2, 0, 7); ctx.arc(cx + cr * 2.4, cy, cr, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo((a + c) / 2, b); ctx.lineTo((a + c) / 2, d); ctx.moveTo(a, (b + d) / 2); ctx.lineTo(c, (b + d) / 2);
+    ctx.lineWidth = LW * 1.6; ctx.stroke();
+    const f = win(48, 74, 12, 34, '#ffb3a7');
+    ctx.fillStyle = '#7ccf5a'; ctx.beginPath(); // tiny hill painting
+    ctx.moveTo(f[0], f[3]); ctx.quadraticCurveTo((f[0] + f[2]) / 2, f[1] + (f[3] - f[1]) * .2, f[2], f[3]); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = LW; ctx.stroke();
+    ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(f[0] + (f[2] - f[0]) * .75, f[1] + (f[3] - f[1]) * .3, (f[2] - f[0]) * .1, 0, 7); ctx.fill(); ctx.stroke();
+    // floor
+    ctx.fillStyle = '#c98b55'; ctx.fillRect(0, horizon, CW, CH - horizon);
+    ctx.strokeStyle = 'rgba(43,29,20,.35)'; ctx.lineWidth = LW * .8;
+    for (let x = -180; x <= 180; x += 12) seg3([x, ROOM.floorY, ROOM.wallZ], [x, ROOM.floorY, -CAM.dist * .6], 'rgba(43,29,20,.3)', LW * .8);
+    ctx.strokeStyle = INK; ctx.lineWidth = LW * 1.4; ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(CW, horizon); ctx.stroke();
+  }
+
+  // --- the seated person (2D cartoon drawn on the plane z = PERSON_Z) ---------
+  function personSpace(z) {
+    const s = scaleAt(z) * PS, [cx, cy] = P(0, 0, z);
+    return { s, X: x => cx + x * s, Y: y => cy - y * s };
+  }
+  function drawChairAndPerson() {
+    // chair back
+    {
+      const { s, X, Y } = personSpace(PERSON_Z + 5);
+      rrect(X(-14), Y(25), 28 * s, 40 * s, 4 * s);
+      ctx.fillStyle = '#e05a47'; ctx.fill(); ctx.lineWidth = LW * 1.4; ctx.strokeStyle = INK; ctx.stroke();
+      rrect(X(-11), Y(22), 22 * s, 6 * s, 2.5 * s); ctx.fillStyle = '#f07c69'; ctx.fill();
+    }
+    const { s, X, Y } = personSpace(PERSON_Z);
+    const lw = LW * 1.5;
+    ctx.lineWidth = lw; ctx.strokeStyle = INK; ctx.lineJoin = 'round';
+    // torso (sweater)
+    ctx.beginPath();
+    ctx.moveTo(X(-11.5), Y(-14));
+    ctx.lineTo(X(-12), Y(8));
+    ctx.quadraticCurveTo(X(-12), Y(13.5), X(-6), Y(14));
+    ctx.lineTo(X(6), Y(14));
+    ctx.quadraticCurveTo(X(12), Y(13.5), X(12), Y(8));
+    ctx.lineTo(X(11.5), Y(-14));
+    ctx.closePath(); ctx.fillStyle = '#3b7dd8'; ctx.fill(); ctx.stroke();
+    // stripes
+    ctx.fillStyle = '#ffd23f';
+    for (const y of [3, -3]) { ctx.beginPath(); ctx.rect(X(-11.9), Y(y + 1), 23.8 * s, 2 * s); ctx.fill(); }
+    // neck + collar
+    ctx.beginPath(); ctx.rect(X(-2.2), Y(17), 4.4 * s, 3.5 * s); ctx.fillStyle = '#f2c29b'; ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(X(0), Y(14), 4.5 * s, 1.6 * s, 0, 0, Math.PI); ctx.fillStyle = '#2f64b0'; ctx.fill(); ctx.stroke();
+    // blindfold tails, tied behind the head (drawn first so the head covers their roots)
+    ctx.fillStyle = '#3a3150';
+    for (const t of [[[5.5, 24.9], [10.6, 27.6], [11.0, 25.5], [6.0, 23.6]], [[5.6, 23.5], [10.2, 21.0], [9.4, 19.4], [5.7, 22.3]]]) {
+      ctx.beginPath(); t.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    // ears
+    for (const sx of [-1, 1]) { ctx.beginPath(); ctx.ellipse(X(6.6 * sx), Y(22), 1.5 * s, 2.1 * s, 0, 0, 7); ctx.fillStyle = '#eab38a'; ctx.fill(); ctx.stroke(); }
+    // head
+    ctx.beginPath(); ctx.ellipse(X(0), Y(23), 6.6 * s, 7.2 * s, 0, 0, 7); ctx.fillStyle = '#f2c29b'; ctx.fill(); ctx.stroke();
+    // hair
+    ctx.beginPath();
+    ctx.moveTo(X(-6.8), Y(23.5));
+    ctx.bezierCurveTo(X(-7.5), Y(32), X(7.5), Y(32), X(6.8), Y(23.5));
+    ctx.quadraticCurveTo(X(5.5), Y(27), X(2), Y(27.4));
+    ctx.quadraticCurveTo(X(-1), Y(25.6), X(-3), Y(27.2));
+    ctx.quadraticCurveTo(X(-6), Y(27), X(-6.8), Y(23.5));
+    ctx.closePath(); ctx.fillStyle = '#5a341d'; ctx.fill(); ctx.stroke();
+    // blindfold band over the eyes
+    ctx.beginPath();
+    ctx.moveTo(X(-7.15), Y(26.2)); ctx.quadraticCurveTo(X(0), Y(25.4), X(7.15), Y(26.2));
+    ctx.lineTo(X(7.15), Y(21.7)); ctx.quadraticCurveTo(X(0), Y(20.8), X(-7.15), Y(21.7));
+    ctx.closePath(); ctx.fillStyle = '#3a3150'; ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(-6.4), Y(25.3)); ctx.quadraticCurveTo(X(0), Y(24.6), X(6.4), Y(25.3));
+    ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = lw * 1.2; ctx.stroke(); ctx.strokeStyle = INK; ctx.lineWidth = lw;
+    // knot at the side
+    ctx.beginPath(); ctx.ellipse(X(7.0), Y(23.9), 1.25 * s, 1.5 * s, 0, 0, 7); ctx.fillStyle = '#4a4066'; ctx.fill(); ctx.stroke();
+    // cheeks
+    for (const sx of [-1, 1]) { ctx.beginPath(); ctx.ellipse(X(4.3 * sx), Y(19.9), 1.3 * s, .8 * s, 0, 0, 7); ctx.fillStyle = 'rgba(232,90,90,.35)'; ctx.fill(); }
+    // nose + smile
+    ctx.beginPath(); ctx.moveTo(X(0.1), Y(21.0)); ctx.quadraticCurveTo(X(1.0), Y(19.9), X(-.2), Y(19.7)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(-2.4), Y(18.6)); ctx.quadraticCurveTo(X(0), Y(16.8), X(2.4), Y(18.6));
+    ctx.quadraticCurveTo(X(0), Y(17.9), X(-2.4), Y(18.6)); ctx.fillStyle = '#b5413b'; ctx.fill(); ctx.stroke();
+  }
+  function drawArms() {
+    const sh = PERSON_Z, lwArm = LW;
+    for (const sx of [-1, 1]) {
+      const [x0, y0] = P(11 * sx * PS, 10 * PS, sh);
+      const [xe, ye] = P(13.5 * sx, TABLE.y + 0.4, TABLE.z1 - 2.5);
+      const [xh, yh] = P(7.5 * sx, TABLE.y + 0.4, TABLE.z1 - 6.5);
+      const w = scaleAt(TABLE.z1) * 4.4;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(xe, ye); ctx.lineTo(xh, yh);
+      ctx.strokeStyle = INK; ctx.lineWidth = w + lwArm * 3; ctx.stroke();
+      ctx.strokeStyle = '#3b7dd8'; ctx.lineWidth = w; ctx.stroke();
+      // hand
+      const hs = scaleAt(TABLE.z1 - 7);
+      ctx.beginPath(); ctx.ellipse(xh - sx * hs * 0.6, yh, hs * 2.5, hs * 1.6, 0, 0, 7);
+      ctx.fillStyle = '#f2c29b'; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = lwArm * 1.4; ctx.stroke();
+    }
+  }
+
+  // --- table & board ----------------------------------------------------------
+  function drawTable() {
+    const T = TABLE, y = T.y;
+    // legs (front pair visible)
+    for (const lx of [T.x0 + 2, T.x1 - 5]) box(lx, lx + 3, ROOM.floorY, y - T.t, T.z0 + 1, T.z0 + 4, { front: '#8a4f25', side: '#6f3d1b', top: '#8a4f25' });
+    box(T.x0, T.x1, y - T.t, y, T.z0, T.z1, { front: '#94562a', side: '#7a4520', top: '#c07f45' });
+    // wood grain on top
+    ctx.save(); path3([[T.x0, y, T.z0], [T.x1, y, T.z0], [T.x1, y, T.z1], [T.x0, y, T.z1]]); ctx.clip();
+    for (let x = T.x0 + 6; x < T.x1; x += 8) seg3([x, y, T.z0], [x, y, T.z1], 'rgba(90,45,15,.22)', LW);
+    ctx.restore();
+  }
+  function drawBoard() {
+    const B = BOARD;
+    box(B.x0, B.x1, -B.t, 0, B.z0, B.z1, { front: '#d9b06a', side: '#c49654', top: '#f7e6b5' });
+  }
+
+  // --- the arrow (replaces the seated person) ---------------------------------
+  // A small, flat 3D arrow lying on the table between the maze and the far edge,
+  // pointing toward the player (-z). Its forward / left / right match the
+  // seated person's frame in the social version.
+  const ARROW = { cz: (BOARD.z1 + TABLE.z1) / 2 + 0.4, th: 0.6, len: 6.4, headLen: 2.8, headW: 3.1, shaftW: 1.25 };
+  function drawArrow() {
+    const A = ARROW, y0 = TABLE.y, y1 = TABLE.y + A.th;
+    const tipZ = A.cz - A.len / 2, tailZ = A.cz + A.len / 2, neckZ = tipZ + A.headLen;
+    const out = [
+      [0, tipZ], [-A.headW, neckZ], [-A.shaftW, neckZ], [-A.shaftW, tailZ],
+      [A.shaftW, tailZ], [A.shaftW, neckZ], [A.headW, neckZ]
+    ];
+    // soft shadow on the table
+    poly3(out.map(([x, z]) => [x + 0.25, y0 + 0.01, z - 0.2]), 'rgba(60,30,10,.25)', null);
+    let area = 0;
+    out.forEach(([x0, z0], k) => { const [x1, z1] = out[(k + 1) % out.length]; area += x0 * z1 - x1 * z0; });
+    const sgn = area > 0 ? 1 : -1;
+    const faces = [];
+    out.forEach(([x0, z0], k) => {
+      const [x1, z1] = out[(k + 1) % out.length];
+      const nx = sgn * (z1 - z0), nz = -sgn * (x1 - x0); // outward normal
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      if (nx * (CAM.x - mx) + nz * (-CAM.dist - mz) > 0) faces.push({ x0, z0, x1, z1, d: mz });
+    });
+    faces.sort((f, g) => g.d - f.d);
+    for (const f of faces) poly3([[f.x0, y0, f.z0], [f.x1, y0, f.z1], [f.x1, y1, f.z1], [f.x0, y1, f.z0]], '#2f64b0', INK, LW * 1.2);
+    poly3(out.map(([x, z]) => [x, y1, z]), '#3b7dd8', INK, LW * 1.3);
+    poly3([[-0.45, y1, tailZ - 0.5], [0.45, y1, tailZ - 0.5], [0.45, y1, neckZ + 0.3], [-0.45, y1, neckZ + 0.3]], '#ffd23f', INK, LW * 0.9);
+  }
+
+
+  // --- boards (main mazes and practice mazes) ---------------------------------
+  const cellX = c => (2 * c + 1) - BW / 2 + 0.5;
+  const cellZ = r => BH - (2 * r + 1) - 0.5;
+  const blockXZ = ([i, rb]) => [i - BW / 2 + 0.5, BH - 1 - rb + 0.5];
+
+  function prepMain(M) {
+    const grid = M.grid.map(r => r.split('').map(Number));
+    const last = M.nodes[M.nodes.length - 1];
+    const exitDir = last[0] === 0 ? 'right' : 'left'; // col 0 is the far side's right
+    const entry = [cellX(M.nodes[0][0]), BOARD.z1 - 0.3];
+    const exit = [exitDir === 'right' ? BOARD.x0 + 0.5 : BOARD.x1 - 0.5, cellZ(last[1])];
+    const start = [entry[0], BOARD.z1 - 0.5];
+    const route = [start, ...M.nodes.map(([c, r]) => [cellX(c), cellZ(r)]), exit];
+    return {
+      grid, blocks: buildBlocks(grid), route, line: [entry, ...route],
+      expected: ['forward', ...M.nodes.slice(1).map((n, i) => dirBetween(M.nodes[i], n)), exitDir],
+      labels: ['green-dot', ...M.nodes.map(n => n.join('-')), 'star']
+    };
+  }
+  function prepPractice(PM) {
+    const PO = { i: (BW - PM.grid[0].length) / 2, rb: (BH - PM.grid.length) / 2 }; // centred on the board
+    const grid = Array.from({ length: BH }, (_, rb) => Array.from({ length: BW }, (_, i) => {
+      const row = PM.grid[rb - PO.rb], c = i - PO.i;
+      return row && c >= 0 && c < row.length ? +row[c] : 0;
+    }));
+    const p0 = PM.nodes[0];
+    const route = [blockXZ([PO.i + 2 * p0[0] + 1, PO.rb - 1]), // green dot, one block behind the practice maze
+      ...PM.nodes.map(([c, r]) => blockXZ([PO.i + 2 * c + 1, PO.rb + 2 * r + 1]))];
+    return {
+      grid, blocks: buildBlocks(grid), route, line: route,
+      expected: ['forward', ...PM.nodes.slice(1).map((n, k) => dirBetween(PM.nodes[k], n))]
+    };
+  }
+
+  // --- route ------------------------------------------------------------------
+  function drawRoute() {
+    const B = board;
+    routeLine(B.line);
+    const [sx, sz] = B.route[0], [ex, ez] = B.route[B.route.length - 1];
+    flatDisc(sx, sz, 0.9, '#7ccf5a');
+    flatStar(ex, ez, 0.75, '#ffd23f');
+  }
+  function routeLine(points) {
+    const pts = points.map(([x, z]) => P(x, 0.02, z));
+    const w = scaleAt(BH / 2) * 0.42;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const line = () => { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); };
+    line(); ctx.strokeStyle = '#a84800'; ctx.lineWidth = w + LW * 2.2; ctx.stroke();
+    line(); ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = w; ctx.stroke();
+    line(); ctx.setLineDash([w * 0.9, w * 1.4]); ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = w * 0.32; ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  function flatDisc(x, z, r, fill) {
+    const pts = []; for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; pts.push([x + Math.cos(a) * r, 0.03, z + Math.sin(a) * r]); }
+    poly3(pts, fill, INK, LW * 1.2);
+  }
+  function flatStar(x, z, r, fill) {
+    const pts = []; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i / 10 * Math.PI * 2, rr = i % 2 ? r * .45 : r; pts.push([x + Math.cos(a) * rr, 0.03, z - Math.sin(a) * rr]); }
+    poly3(pts, fill, INK, LW * 1.2);
+  }
+
+  // --- hedges (painter's order, back to front, outside to centre) -------------
+  const isW = (i, rb) => i >= 0 && i < BW && rb >= 0 && rb < BH && GRID[rb][i] === 1;
+  function buildBlocks(grid) {
+    const list = [];
+    for (let rb = 0; rb < BH; rb++) for (let i = 0; i < BW; i++) if (grid[rb][i]) {
+      const x0 = i - BW / 2, z0 = BH - 1 - rb;
+      list.push({ i, rb, x0, z0, xc: x0 + 0.5 });
+    }
+    return list.sort((a, b) => (b.z0 - a.z0) || (Math.abs(b.xc - CAM.x) - Math.abs(a.xc - CAM.x)));
+  }
+  const HEDGE = { top: '#7fd25c', front: '#4ea53a', side: '#3e8d2e', ink: '#1d3a17', dot: 'rgba(255,255,255,.18)' };
+
+  function drawBlock(b) {
+    const { i, rb, x0, z0 } = b, x1 = x0 + 1, z1 = z0 + 1, h = HEDGE_H;
+    const ink = HEDGE.ink, lw = LW;
+    const fillOnly = (pts, fill) => { path3(pts); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = fill; ctx.lineWidth = 1; ctx.stroke(); };
+    const frontW = isW(i, rb + 1), backW = isW(i, rb - 1), leftW = isW(i - 1, rb), rightW = isW(i + 1, rb);
+    // left side face
+    if (CAM.x < x0 && !leftW) {
+      fillOnly([[x0, 0, z0], [x0, 0, z1], [x0, h, z1], [x0, h, z0]], HEDGE.side);
+      seg3([x0, 0, z0], [x0, 0, z1], ink, lw); seg3([x0, h, z0], [x0, h, z1], ink, lw);
+      if (!(frontW && !isW(i - 1, rb + 1))) seg3([x0, 0, z0], [x0, h, z0], ink, lw);
+      if (!(backW && !isW(i - 1, rb - 1))) seg3([x0, 0, z1], [x0, h, z1], ink, lw);
+    }
+    if (CAM.x > x1 && !rightW) {
+      fillOnly([[x1, 0, z0], [x1, 0, z1], [x1, h, z1], [x1, h, z0]], HEDGE.side);
+      seg3([x1, 0, z0], [x1, 0, z1], ink, lw); seg3([x1, h, z0], [x1, h, z1], ink, lw);
+      if (!(frontW && !isW(i + 1, rb + 1))) seg3([x1, 0, z0], [x1, h, z0], ink, lw);
+      if (!(backW && !isW(i + 1, rb - 1))) seg3([x1, 0, z1], [x1, h, z1], ink, lw);
+    }
+    if (!frontW) {
+      fillOnly([[x0, 0, z0], [x1, 0, z0], [x1, h, z0], [x0, h, z0]], HEDGE.front);
+      seg3([x0, 0, z0], [x1, 0, z0], ink, lw);
+      if (!(leftW && !isW(i - 1, rb + 1))) seg3([x0, 0, z0], [x0, h, z0], ink, lw);
+      if (!(rightW && !isW(i + 1, rb + 1))) seg3([x1, 0, z0], [x1, h, z0], ink, lw);
+    }
+    fillOnly([[x0, h, z0], [x1, h, z0], [x1, h, z1], [x0, h, z1]], HEDGE.top);
+    // a couple of leafy highlights on top
+    const [hx, hy] = P(x0 + 0.35 + ((i * 7 + rb * 3) % 3) * 0.15, h, z0 + 0.6);
+    const hs = scaleAt(z0);
+    ctx.beginPath(); ctx.ellipse(hx, hy, hs * 0.16, hs * 0.08, 0, 0, 7); ctx.fillStyle = HEDGE.dot; ctx.fill();
+    if (!frontW) seg3([x0, h, z0], [x1, h, z0], ink, lw);
+    if (!backW) seg3([x0, h, z1], [x1, h, z1], ink, lw);
+    if (!leftW) seg3([x0, h, z0], [x0, h, z1], ink, lw);
+    if (!rightW) seg3([x1, h, z0], [x1, h, z1], ink, lw);
+  }
+
+  // --- ball -------------------------------------------------------------------
+  const ball = { x: 0, z: 0 };
+  function drawBall() {
+    const { x, z } = ball, s = scaleAt(z), r = BALL_R * s;
+    const [sx, sy] = P(x, BALL_R, z), [gx, gy] = P(x, 0, z + 0.05);
+    ctx.beginPath(); ctx.ellipse(gx + r * .15, gy, r * 1.05, r * .45, 0, 0, 7); ctx.fillStyle = 'rgba(30,20,10,.35)'; ctx.fill();
+    const g = ctx.createRadialGradient(sx - r * .35, sy - r * .4, r * .1, sx, sy, r);
+    g.addColorStop(0, '#ff7a7a'); g.addColorStop(.55, '#e8262b'); g.addColorStop(1, '#a80f14');
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = LW * 1.3; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(sx - r * .35, sy - r * .4, r * .25, r * .16, -0.6, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fill();
+  }
+
+
+  const MAINS = { A: prepMain(MAZE_DATA.A), B: prepMain(MAZE_DATA.B) };
+  const PRACTICES = { A: prepPractice(PRACTICE_DATA.A), B: prepPractice(PRACTICE_DATA.B) };
+  const TOTAL_MOVES = MAINS.A.expected.length; // 32
+
+  // --- frame ------------------------------------------------------------------
+  let scene = 'social', board = PRACTICES.A;
+  const SCENE_LABEL = {
+    social: 'A blindfolded person sits behind a table with a hedge maze on it. A red ball marks the current position on the marked route.',
+    nonsocial: 'A small arrow lies on a table behind a hedge maze, pointing toward you. A red ball marks the current position on the marked route.',
+    none: 'A table with a hedge maze on it.'
+  };
+  function useBoard(b, sc) {
+    board = b; GRID = b.grid;
+    if (sc) { scene = sc; canvas.setAttribute('aria-label', SCENE_LABEL[sc]); }
+    ball.x = b.route[0][0]; ball.z = b.route[0][1];
+  }
+  function draw() {
+    if (!board) return;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    LW = Math.max(1.2, F * 0.085 / (CAM.dist + BH / 2));
+    drawRoom();
+    if (scene === 'social') { drawChairAndPerson(); drawTable(); drawArms(); }
+    else if (scene === 'nonsocial') { drawTable(); drawArrow(); }
+    else drawTable();
+    drawBoard();
+    drawRoute();
+    const bz0 = ball.z - 0.5, bax = Math.abs(ball.x - CAM.x);
+    let ballDrawn = false;
+    for (const b of board.blocks) {
+      if (!ballDrawn && (bz0 > b.z0 + 1e-6 || (Math.abs(bz0 - b.z0) < 1e-6 && bax >= Math.abs(b.xc - CAM.x)))) { drawBall(); ballDrawn = true; }
+      drawBlock(b);
+    }
+    if (!ballDrawn) drawBall();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Instructions
+  // ---------------------------------------------------------------------------
+  const RED = t => `<b style="color:#d81f26">${t}</b>`;
+  const INTRO = {
+    social: `<p>Your game partner across the table is <b>blindfolded</b> and can’t see the maze. They move the ${RED('red ball')}, starting on the green dot, and you guide them along the orange route.</p>
+      <p>At every intersection, tell them which way to go ${RED('from their point of view, as they are sitting:')} <i>left</i>, <i>forward</i>, <i>right</i> or <i>reverse</i>. Use the buttons on the screen.</p>`,
+    nonsocial: `<p>An <b>arrow</b> lies on the far side of the table, pointing toward you. The ${RED('red ball')} starts on the green dot, and you guide it along the orange route.</p>
+      <p>At every intersection, tell which way the ball should go ${RED('relative to the arrow, as it is pointing:')} <i>left</i>, <i>forward</i>, <i>right</i> or <i>reverse</i>. Forward is the direction the arrow points, and left and right are the arrow’s own left and right. Use the buttons on the screen.</p>`
+  };
+  const RULES = `<p>There are ${TOTAL_MOVES} moves. Answer as quickly and accurately as you can. ${RED('You will not be informed if you make a mistake and the ball will still move in the right direction.')}</p>
+      <p>First, a short practice with 4 moves.</p>`;
+  const PRACTICE_FAIL = {
+    social: 'Not all of your moves were correct. Remember to give directions from your game partner’s point of view, as they are sitting. Please try the practice again.',
+    nonsocial: 'Not all of your moves were correct. Remember to give directions relative to the arrow, as it is pointing. Please try the practice again.'
+  };
+
+  // ---------------------------------------------------------------------------
+  // Game logic & data
+  // ---------------------------------------------------------------------------
+  const panel = document.getElementById('panel');
+  const counter = document.getElementById('counter');
+  const msgOverlay = document.getElementById('msgOverlay');
+  const msgTitle = document.getElementById('msgTitle'), msgBody = document.getElementById('msgBody'), msgBtn = document.getElementById('msgBtn');
+  const endOverlay = document.getElementById('endOverlay');
+
+  let assignment = null, plan = [], part = 0, parts = [], session = null;
+  let phase = 'idle', idx = 0, pCorrect = 0, trialStart = 0, busy = false, running = false;
+
+  function setPanel(state) { panel.className = state; }
+  function showMsg(title, html, btnText, onClick) {
+    msgTitle.textContent = title; msgBody.innerHTML = html;
+    msgBtn.textContent = btnText; msgBtn.disabled = false; msgBtn.onclick = onClick;
+    msgOverlay.hidden = false;
+  }
+  function updateCounter() {
+    const p = `Part ${part + 1} of ${plan.length}`;
+    counter.textContent = phase === 'practice' ? `${p} · Practice ${Math.min(idx + 1, 4)} of 4`
+      : phase === 'main' ? `${p} · Move ${Math.min(idx + 1, TOTAL_MOVES)} of ${TOTAL_MOVES}` : p;
+  }
+  function ready() {
+    updateCounter(); draw();
+    requestAnimationFrame(() => { setPanel(''); trialStart = performance.now(); });
+  }
+
+  // --- group assignment ---------------------------------------------------------
+  async function getGroup() {
+    const g = parseInt(URLP.get('GROUP'), 10);
+    if (g >= 1 && g <= 4) return { group: g, source: 'url' };
+    if (CONFIG.DATAPIPE_EXPERIMENT_ID && CONFIG.USE_DATAPIPE_CONDITIONS) {
+      try {
+        const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch('https://pipe.jspsych.org/api/condition/', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Accept: '*/*' },
+          body: JSON.stringify({ experimentID: CONFIG.DATAPIPE_EXPERIMENT_ID }), signal: ctrl.signal
+        });
+        clearTimeout(timer);
+        const j = await r.json();
+        if (r.ok && Number.isInteger(j.condition)) return { group: (j.condition % 4) + 1, source: 'datapipe' };
+      } catch (e) { /* fall through to random */ }
+    }
+    return { group: 1 + Math.floor(Math.random() * 4), source: 'random' };
+  }
+
+  async function begin() {
+    msgBtn.disabled = true; msgBtn.textContent = 'Loading…';
+    assignment = await getGroup();
+    plan = GROUPS[assignment.group].map((p, i) => ({ part: i + 1, ...p }));
+    session = {
+      study_id: PROLIFIC.study, session_id: PROLIFIC.session,
+      group: assignment.group, assignment_source: assignment.source,
+      order: plan[0].condition === 'social' ? 'social_first' : 'nonsocial_first',
+      started: new Date().toISOString()
+    };
+    part = 0; parts = [];
+    partIntro();
+  }
+
+  // --- one part: instructions -> practice (until all correct) -> 32 moves ----
+  function partIntro() {
+    const p = plan[part];
+    parts[part] = { ...p, practice_attempts: 0, trials: [] };
+    phase = 'idle'; running = false; setPanel('idle');
+    useBoard(PRACTICES[p.maze], p.condition); updateCounter(); draw();
+    const lead = part === 0 ? '' : '<p><b>Part 1 is complete – well done!</b> In this part the setup is different.</p>';
+    showMsg(`Part ${part + 1} of ${plan.length}`, lead + INTRO[p.condition] + RULES, 'Start practice', startPractice);
+  }
+  function startPractice() {
+    msgOverlay.hidden = true;
+    const p = plan[part];
+    parts[part].practice_attempts++;
+    useBoard(PRACTICES[p.maze]);
+    phase = 'practice'; idx = 0; pCorrect = 0; running = true;
+    ready();
+  }
+  function practiceDone() {
+    busy = true; setPanel('busy');
+    setTimeout(() => {
+      busy = false; running = false; setPanel('idle');
+      const passed = pCorrect === board.expected.length;
+      if (passed) showMsg('Practice complete!', `<p>Well done. Now the real game begins: ${TOTAL_MOVES} moves through the maze. Answer as quickly and accurately as you can.</p>`, 'Start the game', startMain);
+      else showMsg('Let’s practise again', `<p>${PRACTICE_FAIL[plan[part].condition]}</p>`, 'Try again', startPractice);
+    }, 350);
+  }
+  function startMain() {
+    msgOverlay.hidden = true;
+    useBoard(MAINS[plan[part].maze]);
+    parts[part].started = new Date().toISOString();
+    phase = 'main'; idx = 0; running = true;
+    ready();
+  }
+
+  function respond(dir) {
+    if (!running || busy) return;
+    if (phase === 'practice') {
+      if (dir === board.expected[idx]) pCorrect++;
+      // like the real game, the ball always goes the marked way and no feedback is given per move
+      return animatePoint(board.route[idx + 1], () => {
+        idx++;
+        if (idx < board.expected.length) ready(); else practiceDone();
+      });
+    }
+    const rt = performance.now() - trialStart;
+    const expected = board.expected[idx];
+    parts[part].trials.push({ trial: idx + 1, from: board.labels[idx], to: board.labels[idx + 1], expected, response: dir, correct: dir === expected ? 1 : 0, rt });
+    // The ball always follows the route; no feedback of any kind is given.
+    animatePoint(board.route[idx + 1], () => {
+      idx++;
+      if (idx < TOTAL_MOVES) return ready();
+      const P_ = parts[part];
+      P_.finished = new Date().toISOString(); P_.stats = computeStats(P_.trials);
+      running = false; setPanel('idle');
+      part++;
+      if (part < plan.length) partIntro(); else finish();
+    });
+  }
+
+  function animatePoint([x1, z1], done) {
+    busy = true; setPanel('busy');
+    const [x0, z0] = [ball.x, ball.z];
+    const cells = (Math.abs(x1 - x0) + Math.abs(z1 - z0)) / 2;
+    const dur = 220 + 130 * cells;
+    const t0 = performance.now();
+    const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    function step(now) {
+      const t = Math.min(1, (now - t0) / dur), e = ease(t);
+      ball.x = x0 + (x1 - x0) * e; ball.z = z0 + (z1 - z0) * e;
+      draw();
+      if (t < 1) requestAnimationFrame(step);
+      else { busy = false; done(); }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // --- statistics -------------------------------------------------------------
+  const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN;
+  const sd = a => { if (a.length < 2) return NaN; const m = mean(a); return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1)); };
+  function computeStats(t) {
+    const all = t.map(x => x.rt), cor = t.filter(x => x.correct).map(x => x.rt);
+    return {
+      intersections: t.length,
+      errors: t.filter(x => !x.correct).length,
+      meanRT: mean(all), meanCorrectRT: mean(cor),
+      sdRT: sd(all), sdCorrectRT: sd(cor)
+    };
+  }
+  const fmt = v => Number.isFinite(v) ? v.toFixed(1) : 'n/a';
+
+  function finish() {
+    phase = 'done'; running = false; setPanel('idle');
+    counter.textContent = 'Finished';
+    session.finished = new Date().toISOString();
+    session.parts = parts;
+    document.getElementById('endMeta').textContent = new Date(session.finished).toLocaleString();
+    const rows = [
+      ['Intersections travelled', parts.reduce((s, p) => s + p.stats.intersections, 0)],
+      ...parts.map((p, i) => [`Errors in part ${i + 1}`, p.stats.errors])
+    ]; // response times are not shown, only saved
+    const table = document.getElementById('statsTable');
+    table.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+    table.hidden = ONLINE && !CONFIG.SHOW_RESULTS_TO_PARTICIPANT;
+    document.querySelector('#endOverlay h2').textContent = ONLINE ? 'Finished – thank you!' : 'Finished!';
+    // participants on Prolific play once: no "Play again"
+    document.getElementById('localRow').hidden = ONLINE;
+    endOverlay.hidden = false;
+    if (CONFIG.DATAPIPE_EXPERIMENT_ID) upload(); else showReturn();
+  }
+
+  // --- upload through DataPipe (success is judged by HTTP status only) ---------
+  const statusEl = document.getElementById('saveStatus');
+  function setStatus(text, color) { statusEl.hidden = false; statusEl.textContent = text; statusEl.style.color = color || ''; }
+  function showReturn() {
+    if (!CONFIG.PROLIFIC_COMPLETION_URL) return;
+    document.getElementById('prolificRow').hidden = false;
+    const a = document.getElementById('returnBtn'); a.href = CONFIG.PROLIFIC_COMPLETION_URL; a.hidden = false;
+  }
+  function postFile(filename, data) {
+    return fetch('https://pipe.jspsych.org/api/data/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: '*/*' },
+      body: JSON.stringify({ experimentID: CONFIG.DATAPIPE_EXPERIMENT_ID, filename, data })
+    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
+  }
+  let uploaded = {};
+  async function upload() {
+    document.getElementById('retryBtn').hidden = true;
+    setStatus('Saving your responses… please don’t close this page.');
+    const base = 'maze_' + stamp(session);
+    const files = { [base + '_summary.csv']: summaryCSV(session), [base + '_trials.csv']: trialsCSV(session) };
+    try {
+      for (const [name, text] of Object.entries(files)) if (!uploaded[name]) { await postFile(name, text); uploaded[name] = true; }
+      setStatus('Your responses have been saved. ✓', '#2e7d32');
+      showReturn();
+    } catch (e) {
+      setStatus('Saving failed (' + e.message + '). Check your internet connection and try again.', '#b5413b');
+      document.getElementById('prolificRow').hidden = false;
+      document.getElementById('retryBtn').hidden = false;
+    }
+  }
+  document.getElementById('retryBtn').onclick = upload;
+
+  // --- CSV export (one summary row per part; one trial row per move) ----------
+  const ID_HEAD = ['study_id', 'session_id', 'group', 'order', 'assignment_source', 'part', 'condition', 'maze'];
+  const idCells = (s, p) => [s.study_id, s.session_id, s.group, s.order, s.assignment_source, p.part, p.condition, p.maze];
+  const SUMMARY_HEAD = [...ID_HEAD, 'practice_attempts', 'started', 'finished', 'intersections_travelled', 'errors', 'mean_rt_ms', 'mean_correct_rt_ms', 'sd_rt_ms', 'sd_correct_rt_ms'];
+  const csvCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = rows => rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+  // file names use Prolific's session ID (from the study link) when present, plus the start time
+  const stamp = s => (s.session_id ? s.session_id.replace(/[^\w-]+/g, '_') + '_' : '') + s.started.replace(/[:.]/g, '-');
+  const summaryCSV = s => csv([SUMMARY_HEAD, ...s.parts.map(p => [...idCells(s, p), p.practice_attempts, p.started, p.finished,
+    p.stats.intersections, p.stats.errors, fmt(p.stats.meanRT), fmt(p.stats.meanCorrectRT), fmt(p.stats.sdRT), fmt(p.stats.sdCorrectRT)])]);
+  const trialsCSV = s => csv([
+    [...ID_HEAD, 'trial', 'from_cell', 'to_cell', 'correct_direction', 'response', 'correct', 'rt_ms'],
+    ...s.parts.flatMap(p => p.trials.map(t => [...idCells(s, p), t.trial, t.from, t.to, t.expected, t.response, t.correct, t.rt.toFixed(1)]))
+  ]);
+
+  msgBtn.onclick = begin;
+  document.getElementById('againBtn').onclick = () => location.reload();
+  document.querySelectorAll('.dir').forEach(b => b.addEventListener('pointerdown', e => { e.preventDefault(); respond(b.dataset.dir); }));
+  // keyboard activation of a focused button still counts as a click
+  document.querySelectorAll('.dir').forEach(b => b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); respond(b.dataset.dir); } }));
+
+  // expose for testing / experimenters
+  window.mazeGuide = {
+    GROUPS, MAINS, PRACTICES, computeStats, summaryCSV, trialsCSV,
+    get assignment() { return assignment; }, get plan() { return plan; }, get parts() { return parts; },
+    get session() { return session; }, get phase() { return phase; }, get board() { return board; }, get scene() { return scene; }
+  };
+
+  // first picture behind the welcome card: just the table and a practice maze (no condition shown yet)
+  useBoard(PRACTICES.A, 'none');
+  const ro = new ResizeObserver(() => { fit(); draw(); });
+  ro.observe(canvas);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => draw());
+})();
+</script>
+</body>
+</html>
